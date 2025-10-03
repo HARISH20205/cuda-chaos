@@ -126,82 +126,116 @@ __global__ void countNonZerosPerRow(int *d_mat, int *d_rowCounts, int r, int c) 
     }
 }
 
-__global__ void prefixSum(int *d_rowCounts, int *nnz){
 
+__global__ void encode(int *d_mat, int *d_row, int *d_col, int *d_val, int r, int c) {
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= r) return;
+
+    int start = d_row[row];
+    int idx = 0;
+
+    for (int col = 0; col < c; col++) {
+        int val = d_mat[row * c + col];
+        if (val != 0) {
+            d_col[start + idx] = col;   
+            d_val[start + idx] = val;  
+            idx++;
+        }
     
+    }
 }
+
+__global__ void decode(int *d_mat, int *d_row, int *d_col, int *d_val, int r, int c) {
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= r) return;
+
+    int start = d_row[row];
+    int end = d_row[row + 1];
+
+    for (int i = start; i < end; i++) {
+        int col = d_col[i];
+        int val = d_val[i];
+        d_mat[row * c + col] = val;
+    }
+}
+
+
 
 int main(){
 
-    int m = 10;
-    int n = 10;
+    int m = 10000;
+    int n = 10000;
     createInput(m,n);
 
     int r,c;
-    int *h_mat, *h_rowCounts, *h_row, *h_col, *h_val;
-    int *d_mat, *d_rowCounts, *d_row, *d_col, *d_val;
+    int *h_mat, *h_rowCounts, *h_row, *h_col, *h_val,*hd_mat;
+    int *d_mat, *d_rowCounts, *d_row, *d_col, *d_val, *dd_mat;
 
     h_mat = getInput(&r,&c);
 
     h_rowCounts = (int*)malloc(r*sizeof(int));
 
-    displayMatrix(h_mat,r,c);
+    // displayMatrix(h_mat,r,c);
 
     cudaMalloc((void**)&d_mat, r*c*sizeof(int));
     cudaMalloc((void**)&d_rowCounts, r*sizeof(int));
     cudaMemcpy(d_mat, h_mat, r*c*sizeof(int), cudaMemcpyHostToDevice);
 
     
-    int blockSize = 32;
+    int blockSize = 512;
     int gridSize = (r + blockSize - 1) / blockSize;
     countNonZerosPerRow<<<gridSize, blockSize>>>(d_mat, d_rowCounts, r, c);
     cudaDeviceSynchronize();
     cudaMemcpy(h_rowCounts, d_rowCounts, r*sizeof(int), cudaMemcpyDeviceToHost);
 
-
-    for (int i = 0; i < r; i++) {
-        printf("rrow %d has %d non-zero elements\n", i, h_rowCounts[i]);
+    h_row = (int *)malloc((r+1)*sizeof(int));
+    h_row[0] = 0;
+    for (int i = 1; i < r + 1; i++) {
+        h_row[i] = h_row[i - 1] + h_rowCounts[i - 1];
     }
-
-    //need to implement prefix sum to get row array
-    //add encoding and decoding kernels for csr
-    //verify correcttness of encoding and decoding
     
+    int nnz = h_row[r];
+
+    cudaMalloc((void**)&d_col, nnz * sizeof(int));
+    cudaMalloc((void**)&d_val, nnz * sizeof(int));
+
+    h_col = (int *)malloc(nnz * sizeof(int));
+    h_val = (int *)malloc(nnz * sizeof(int));
+
+    int block = 32;
+    int grid = (r + block - 1) / block;
+
+    cudaMalloc((void**)&d_row, (r + 1) * sizeof(int));
+    cudaMemcpy(d_row, h_row, (r + 1) * sizeof(int), cudaMemcpyHostToDevice);
+
+    encode<<<grid, block>>>(d_mat, d_row, d_col, d_val, r, c);
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(h_col, d_col, nnz * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_val, d_val, nnz * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // displayCSRMatrix(h_row, h_col, h_val, nnz, r);
+
+    cudaMalloc((void**)&dd_mat, r * c * sizeof(int));
+    cudaMemset(dd_mat, 0, r * c * sizeof(int));
+    decode<<<grid, block>>>(dd_mat, d_row, d_col, d_val, r, c);
+
+    hd_mat = (int*)malloc(r * c * sizeof(int));
+    cudaMemcpy(hd_mat, dd_mat, r * c * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // displayMatrix(hd_mat, r, c);
+
+    checkCSR(h_mat, hd_mat, r, c);
 
     free(h_mat);
+    free(h_row);
+    free(h_col);
+    free(h_val);
     cudaFree(d_mat);
     cudaFree(d_rowCounts);
+    cudaFree(d_row);
+    cudaFree(d_col);
+    cudaFree(d_val);
     return 0;
-
-
-
-    // cudaMalloc((void**)&d_mat, r*c*sizeof(int));
-    // cudaMalloc((void**)&d_row, (r+1)*sizeof(int));
-
-    // cudaMemcpy(d_mat, h_mat, r*c*sizeof(int), cudaMemcpyHostToDevice);
-
-    // int block = 32;
-
-    // int grid = ((r*c)+block-1)/block;
-
-    // encodeCSR<<<grid,block>>>(d_mat, d_row, d_col, d_val, r, c);
-    // cudaDeviceSynchronize();
-
-    // cudaMemcpy(h_row, d_row, (r+1)*sizeof(int), cudaMemcpyDeviceToHost);
-    // cudaMemcpy(h_col, d_col, nnz*sizeof(int), cudaMemcpyDeviceToHost);
-    // cudaMemcpy(h_val, d_val, nnz*sizeof(int), cudaMemcpyDeviceToHost);
-
-    // displayCSRMatrix(h_row,h_col,h_val,nnz,r);
-
-    // //free memory
-    // free(h_mat);
-    // free(h_row);
-    // free(h_col);
-    // free(h_val);
-    // cudaFree(d_mat);
-    // cudaFree(d_row);
-    // cudaFree(d_col);
-    // cudaFree(d_val);
-    // return 0;
 
 }
