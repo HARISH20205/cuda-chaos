@@ -3,10 +3,13 @@
 #include <time.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <time.h>
+
+
 
 void createInput(int m, int n){
     printf("generating input matrix of size %d x %d\n", m, n);
-    printf("input matrix generated and saved to input.txt\n");
+    printf("input matrix generated\n");
     srand(time(NULL));
 
     int min = 0;
@@ -33,6 +36,8 @@ void createInput(int m, int n){
 
     }
     fclose(fptr);
+
+    printf("input matrix saved successsfully\n");
 }
 
 
@@ -44,7 +49,7 @@ void writeOutput(int *mat, int r, int c){
     for (int i=0;i<r*c;i++){
         fprintf(fptr,"%d\n",mat[i]);
     }
-    printf("csr decoded output matrix saved to output.txt\n");
+    printf("csr decoded output matrix saved successfully\n");
     fclose(fptr);
 }
 
@@ -69,7 +74,6 @@ int* getInput( int *r, int *c){
     }
 
     fclose(fptr);
-
     return mat;
 }
 
@@ -161,31 +165,80 @@ __global__ void decode(int *d_mat, int *d_row, int *d_col, int *d_val, int r, in
 
 
 
-int main(){
+int main(int argc, char* argv[]){
 
-    int m = 10000;
-    int n = 10000;
+    int m;
+    int n;
+    cudaError_t err;
+    m = atoi(argv[1]);
+    n = atoi(argv[2]);
+    printf("using matrix size %d x %d\n", m, n);
+    cudaEvent_t c_start, c_stop;
+    cudaEventCreate(&c_start);
+    cudaEventCreate(&c_stop);
+
+    struct timespec start, end;
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     createInput(m,n);
+    
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    double elapsed_create_input = (end.tv_sec - start.tv_sec) * 1e6;
+    elapsed_create_input += (end.tv_nsec - start.tv_nsec) / 1e3;
+    printf("time taken to create input: %f µs\n", elapsed_create_input);
+
 
     int r,c;
     int *h_mat, *h_rowCounts, *h_row, *h_col, *h_val,*hd_mat;
     int *d_mat, *d_rowCounts, *d_row, *d_col, *d_val, *dd_mat;
 
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     h_mat = getInput(&r,&c);
+    
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    double elapsed_get_input = (end.tv_sec - start.tv_sec) * 1e6;
+    elapsed_get_input = (elapsed_get_input + (end.tv_nsec - start.tv_nsec)) / 1e3;
+    printf("time taken to read input: %f µs\n", elapsed_get_input);
 
     h_rowCounts = (int*)malloc(r*sizeof(int));
 
     // displayMatrix(h_mat,r,c);
+    cudaEventRecord(c_start);
 
     cudaMalloc((void**)&d_mat, r*c*sizeof(int));
     cudaMalloc((void**)&d_rowCounts, r*sizeof(int));
     cudaMemcpy(d_mat, h_mat, r*c*sizeof(int), cudaMemcpyHostToDevice);
 
-    
+    cudaEventRecord(c_stop);
+    cudaEventSynchronize(c_stop);
+
+    float elapsed_copy_input = 0;
+    cudaEventElapsedTime(&elapsed_copy_input, c_start, c_stop);
+    printf("time taken to copy input matrix to device: %f µs\n", elapsed_copy_input);
+
+
+    cudaEventRecord(c_start);
+
     int blockSize = 512;
     int gridSize = (r + blockSize - 1) / blockSize;
     countNonZerosPerRow<<<gridSize, blockSize>>>(d_mat, d_rowCounts, r, c);
-    cudaDeviceSynchronize();
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("Kernel execution error: %s\n", cudaGetErrorString(err));
+    }
+
+    cudaEventRecord(c_stop);
+    cudaEventSynchronize(c_stop);
+
+    float elapsed_count_non_zeros = 0;
+    cudaEventElapsedTime(&elapsed_count_non_zeros, c_start, c_stop);
+    printf("time taken to count non-zeros per row: %f µs\n", elapsed_count_non_zeros);
+
     cudaMemcpy(h_rowCounts, d_rowCounts, r*sizeof(int), cudaMemcpyDeviceToHost);
 
     h_row = (int *)malloc((r+1)*sizeof(int));
@@ -208,8 +261,17 @@ int main(){
     cudaMalloc((void**)&d_row, (r + 1) * sizeof(int));
     cudaMemcpy(d_row, h_row, (r + 1) * sizeof(int), cudaMemcpyHostToDevice);
 
+    cudaEventRecord(c_start);
+
+
     encode<<<grid, block>>>(d_mat, d_row, d_col, d_val, r, c);
     cudaDeviceSynchronize();
+
+    cudaEventRecord(c_stop);
+    cudaEventSynchronize(c_stop);
+    float elapsed_encode = 0;
+    cudaEventElapsedTime(&elapsed_encode, c_start, c_stop);
+    printf("time taken to encode matrix to csr: %f µs\n", elapsed_encode);
 
     cudaMemcpy(h_col, d_col, nnz * sizeof(int), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_val, d_val, nnz * sizeof(int), cudaMemcpyDeviceToHost);
@@ -218,7 +280,18 @@ int main(){
 
     cudaMalloc((void**)&dd_mat, r * c * sizeof(int));
     cudaMemset(dd_mat, 0, r * c * sizeof(int));
+
+    cudaEventRecord(c_start);
+
     decode<<<grid, block>>>(dd_mat, d_row, d_col, d_val, r, c);
+    cudaDeviceSynchronize();
+
+    cudaEventRecord(c_stop);
+    cudaEventSynchronize(c_stop);
+    float elapsed_decode = 0;
+    cudaEventElapsedTime(&elapsed_decode, c_start, c_stop);
+    printf("time taken to decode csr to matrix: %f µs\n", elapsed_decode);
+
 
     hd_mat = (int*)malloc(r * c * sizeof(int));
     cudaMemcpy(hd_mat, dd_mat, r * c * sizeof(int), cudaMemcpyDeviceToHost);
@@ -237,5 +310,4 @@ int main(){
     cudaFree(d_col);
     cudaFree(d_val);
     return 0;
-
 }
