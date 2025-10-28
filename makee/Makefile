@@ -14,9 +14,9 @@ CUDA_FLAGS = -arch=sm_89 -gencode arch=compute_89,code=sm_89
 
 
 03_cu:
-	@$(NVCC) $(CUDA_FLAGS) 03.cu -o 03_cu
-	@./03_cu
+	@$(NVCC) $(CUDA_FLAGS) 03.cu -o 03_cu.out
+	@./03_cu.out
 
 
 clean:
-	rm -f 01 02 03_cu *.o
+	rm -f 01 02 03_cu.out *.out

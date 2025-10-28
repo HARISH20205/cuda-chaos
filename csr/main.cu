@@ -23,7 +23,6 @@ void createInput(int m, int n){
     fprintf(fptr, "%d\n", n);
 
 
-
     for (int i=0;i<m*n;i++){
         int r = (rand() % (10-1+1))+1;
         if (r>8){
@@ -195,15 +194,9 @@ int main(int argc, char* argv[]){
     int *d_mat, *d_rowCounts, *d_row, *d_col, *d_val, *dd_mat;
 
 
-    clock_gettime(CLOCK_MONOTONIC, &start);
 
     h_mat = getInput(&r,&c);
-    
-    clock_gettime(CLOCK_MONOTONIC, &end);
 
-    double elapsed_get_input = (end.tv_sec - start.tv_sec) * 1e6;
-    elapsed_get_input = (elapsed_get_input + (end.tv_nsec - start.tv_nsec)) / 1e3;
-    printf("time taken to read input: %f µs\n", elapsed_get_input);
 
     h_rowCounts = (int*)malloc(r*sizeof(int));
 
