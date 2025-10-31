@@ -182,6 +182,63 @@ __global__ void decode(int *d_mat, int *d_row, int *d_col, int *d_val, int r, in
     }
 }
 
+void encoderCPU(int *mat, int r, int c, int *row, int *col, int *val)
+{
+    int idx = 0;
+    row[0] = 0;
+    for (int i = 0; i < r; i++)
+    {
+        for (int j = 0; j < c; j++)
+        {
+            int id = i * c + j;
+            if (mat[id] != 0)
+            {
+                col[idx] = j;
+                val[idx] = mat[id];
+                idx++;
+            }
+        }
+        row[i + 1] = idx;
+    }
+}
+
+int *decoderCPU(int *row, int *col, int *val, int nnz, int r, int c)
+{
+
+    int *mat = (int *)calloc(r * c, sizeof(int));
+    if (!mat)
+    {
+        printf("memory allocation failed!\n");
+        exit(1);
+    }
+    for (int i = 0; i < r; i++)
+    {
+        for (int j = row[i]; j < row[i + 1]; j++)
+        {
+            int colIdx = col[j];
+            mat[i * c + colIdx] = val[j];
+        }
+    }
+    return mat;
+}
+
+int countNonZero(int *mat, int r, int c)
+{
+
+    int count = 0;
+    for (int i = 0; i < r; i++)
+    {
+        for (int j = 0; j < c; j++)
+        {
+            if (mat[i * c + j] != 0)
+            {
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
 int main(int argc, char *argv[])
 {
 
@@ -203,11 +260,40 @@ int main(int argc, char *argv[])
     createInput(m, n);
 
     clock_gettime(CLOCK_MONOTONIC, &end);
-
     double elapsed_create_input = (end.tv_sec - start.tv_sec) * 1e6;
     elapsed_create_input += (end.tv_nsec - start.tv_nsec) / 1e3;
     printf("time taken to create input: %f µs\n", elapsed_create_input);
 
+    // cpu
+
+    int c_nnz;
+
+    int *data = getInput(&m, &n);
+
+    c_nnz = countNonZero(data, m, n);
+
+    int *c_row = (int *)malloc((m + 1) * sizeof(int));
+    int *c_col = (int *)malloc(c_nnz * sizeof(int));
+    int *c_val = (int *)malloc(c_nnz * sizeof(int));
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    encoderCPU(data, m, n, c_row, c_col, c_val);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double elapsed_cpu_encode = (end.tv_sec - start.tv_sec) * 1e6;
+    elapsed_cpu_encode += (end.tv_nsec - start.tv_nsec) / 1e3;
+    printf("time taken to encode matrix to csr on cpu: %f µs\n", elapsed_cpu_encode);
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    int *d_decoded_mat = decoderCPU(c_row, c_col, c_val, c_nnz, m, n);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double elapsed_cpu_decode = (end.tv_sec - start.tv_sec) * 1e6;
+    elapsed_cpu_decode += (end.tv_nsec - start.tv_nsec) / 1e3;
+
+    printf("time taken to decode csr to matrix on cpu: %f µs\n", elapsed_cpu_decode);
+
+    printf("total time taken for csr encoding and decoding on cpu: %f µs\n", elapsed_cpu_encode + elapsed_cpu_decode);
+
+    // gpu
     int r, c;
     int *h_mat, *h_rowCounts, *h_row, *h_col, *h_val, *hd_mat;
     int *d_mat, *d_rowCounts, *d_row, *d_col, *d_val, *dd_mat;
@@ -301,12 +387,14 @@ int main(int argc, char *argv[])
     cudaEventElapsedTime(&elapsed_decode, c_start, c_stop);
     printf("time taken to decode csr to matrix: %f µs\n", elapsed_decode);
 
+    printf("total time taken for csr encoding and decoding on gpu: %f µs\n", elapsed_encode + elapsed_decode);
     hd_mat = (int *)malloc(r * c * sizeof(int));
     cudaMemcpy(hd_mat, dd_mat, r * c * sizeof(int), cudaMemcpyDeviceToHost);
 
     // displayMatrix(hd_mat, r, c);
 
     checkCSR(h_mat, hd_mat, r, c);
+    printf("cuda code is %fx faster than cpu code\n", (elapsed_cpu_encode + elapsed_cpu_decode) / (elapsed_encode + elapsed_decode));
 
     free(h_mat);
     free(h_row);

@@ -272,6 +272,14 @@ tracks:
 
 ### Test run
 
-![alt text](25000x25000.png)
+### 1. input matrix: 1000x1000 with ~20% non-zeros
 
-**complete end to end benchmarks will be added soon**
+![alt text](10000x10000.png)
+
+### 2. input matrix: 2000x2000 with ~20% non-zeros
+
+![alt text](20000x20000.png)
+
+### 3. input matrix: 2500x2500 with ~20% non-zeros
+
+![alt text](25000x25000.png)
